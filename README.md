@@ -53,9 +53,13 @@ With the function in hand, we can try to load one of the genomes and see what is
 
 ```python
 genome1 = read_fasta_file('data/genome1.fa')
+genome2 = read_fasta_file('data/genome2.fa')
 print(genome1.keys())
+print(genome2.keys())
+
 ```
 
+    dict_keys(['genome', 'annotation'])
     dict_keys(['genome', 'annotation'])
 
 
@@ -90,7 +94,7 @@ while the annotation is a sequence over the letters
 print(set(genome1['annotation']))
 ```
 
-    {'C', 'R', 'N'}
+    {'C', 'N', 'R'}
 
 
 that should be interpreted as non-coding, reverse-coding, and coding.
@@ -347,49 +351,211 @@ theta = hmm_params(pi, T, E) # combining parameters from above
 
 ```
 
+Likewise, we can wrap up our data:
+
+
+```python
+HMMData = NamedTuple('HMMData', [
+    ('k', int),
+    ('x', list[int]),
+    ('z', list[int])
+])
+
+def hmm_data(k: int, x: str, z: str) -> HMMData:
+    """
+    Wrap a genomic sequence and an annotation as an HMMData object.
+    
+    The parameter k determines if we use the three or seven state HMM.
+    """
+    assert len(x) == len(z)
+    match k:
+        case 3:
+            return HMMData(k, observed_states(x), hidden_states(z))
+        case 7:
+            return HMMData(k, observed_states(x), hidden_states7(z))
+        case _:
+            assert False, "We only have 3 and 7 state models"
+
+```
+
+
+```python
+# Let's just wrap up all our data once and for all, so we have it ready to go later
+data1_3 = hmm_data(3, genome1['genome'], genome1['annotation'])
+data1_7 = hmm_data(7, genome1['genome'], genome1['annotation'])
+data2_3 = hmm_data(3, genome2['genome'], genome2['annotation'])
+data2_7 = hmm_data(7, genome2['genome'], genome2['annotation'])
+```
+
 The probability that we go from state $s$ to state $t$ is $T[s,t]$, so with our mapped sequences, let's call them `obs` for observed and `hid` for hidden, the probability of the transition at position `i` should be `T[hid[i],hid[i+1]]`. The probabiity of emitting what we have at position is `E[hid[i],obs[i]]`, and the probability of starting in the first state it `pi[hid[0]]`.
 
 Use these observations to implement a function that computes the likelihood of a genomic sequence and an annotation.
 
 
 ```python
-def lik(obs: list[int], hid: list[int], theta: HMMParam) -> float:
+def lik(data: HMMData, theta: HMMParam) -> float:
     """
     Compute the likelihood of the data (obs,hid) given the parameters, theta.
-    
-    >>> pi = np.array([0, 1, 0]) # always start in N (== 1)
-    >>> T = np.array([[0.8, 0.2, 0.0], [0.1, 0.8, 0.1], [0.0, 0.2, 0.8]])
-    >>> E = np.array([[0.3, 0.2, 0.1, 0.4], [0.5, 0.1, 0.2, 0.2], [0.2, 0.2, 0.3, 0.3]])
-    >>> theta = hmm_params(pi, T, E)
-    >>> lik(observed_states('A'), hidden_states('N'), theta)
-    0.55
     """
-    _, pi, T, E = theta # get the parameters (we don't need K in this function)
+    k1, x, z = data
+    k2, pi, T, E = theta
+    assert k1 == k2
+    
     # FIXME: compute the likelihood
-    p = pi[hid[0]]
-    for i, s in enumerate(hid[1:]):
-        p *= T[hid[i], s]
-    for i, _ in enumerate(hid):
-        p *= E[hid[i], obs[i]]
+    p = pi[z[0]]
+    for i, s in enumerate(z[1:]):
+        p *= T[z[i], s]
+    for i, _ in enumerate(z):
+        p *= E[z[i], x[i]]
     return p
 
 ```
 
 
 ```python
-obs = observed_states('A')#ACAAGTCA')
-hid = hidden_states('N')#NCCCNRR')
-print(lik(obs, hid, theta))
-print(theta)
+# Some rudementary tests that it works; maybe you should test more?
+assert_almost_equal(lik(hmm_data(3, 'A', 'N'), theta), 0.5)
+assert_almost_equal(lik(hmm_data(3, 'AC', 'NC'), theta), 0.01)
+assert_almost_equal(lik(hmm_data(3, 'ACGTTCGA', 'NCCCNRRR'), theta), 7.86432e-09)
+
 ```
 
-    0.5
-    HMMParam(K=3, pi=array([0, 1, 0]), T=array([[0.8, 0.2, 0. ],
-           [0.1, 0.8, 0.1],
-           [0. , 0.2, 0.8]]), E=array([[0.3, 0.2, 0.1, 0.4],
-           [0.5, 0.1, 0.2, 0.2],
-           [0.2, 0.2, 0.3, 0.3]]))
+As should be obvious here, the likelihood gets very small very quickly. This is expected, since we are multiplying numbers in the range 0 to 1 together, and there isn't anything we can do about. It is also a problem, however, since floating point numbers have a finite resolution and eventually we will see all the likelihoods as indistinguishable from zero.
 
+Because of this, we usually do not compute the likelihood of large data, but rather the *log*-likelihood.
+
+The logarithm will also run into problems eventually--there is no good way of dealing with floating point numbers--but it doesn't happen as quickly, and if we compute the log-likelihood we can easily deal with genomic sized data (especially when the genomes in question are bacterial).
+
+Implement a function that computes the logarithm of the likelihood instead. You shouldn't just take the log of the function above--that would defeat the purpose as we would get zero for long sequences, and taking the log of that is not valid--but you can use the log of the input parameters and replace multipliation with addition, and then you should be fine.
+
+
+```python
+def log_each(x: ArrayLike) -> ArrayLike:
+    """
+    Take the log of each component.
+    
+    This is just numpy.log, but disabling warnings if x contains zero.
+    """
+    with np.errstate(divide='ignore'):
+        return np.log(x)
+
+def log_lik(data: HMMData, theta: HMMParam) -> float:
+    """
+    Compute the log-likelihood of the data (obs,hid) given the parameters, theta.
+    """
+    k1, x, z = data
+    k2, pi, T, E = theta
+    assert k1 == k2
+
+    pi, T, E = log_each(pi), log_each(T), log_each(E)
+
+    # FIXME: compute the likelihood
+    p = pi[z[0]]
+    for i, s in enumerate(z[1:]):
+        p += T[z[i], s]
+    for i, _ in enumerate(z):
+        p += E[z[i], x[i]]
+    return p
+
+```
+
+
+```python
+# Some rudementary tests that it works; maybe you should test more?
+assert_almost_equal(log_lik(hmm_data(3, 'A', 'N'), theta), np.log(0.5))
+assert_almost_equal(log_lik(hmm_data(3, 'AC', 'NC'), theta), np.log(0.01))
+assert_almost_equal(log_lik(hmm_data(3, 'ACGTTCGA', 'NCCCNRRR'), theta), np.log(7.86432e-09))
+
+```
+
+If we can compute the log-likelihood of short sequences, we should also be able to compute them for our full genomes--it just might take a little longer.
+
+
+```python
+assert_almost_equal(log_lik(data1_3, theta), -3055335.10505437)
+assert_almost_equal(log_lik(data2_3, theta), -float("inf"))
+```
+
+The log-likelihood for the second genome is -inf, which means that the likelihood is zero (in this context). That is probably because the data contains a transition that has probability zero in the parameters, and that is likely an indication that the parameters we pulled our of a hat weren't that good after all. We should probably estimate the parameters instead of guessing them.
+
+## Estimating parameters
+
+When we have both the observed and the hidden sequence, estimating paramters is easy. We simply count how often we see the various events, and then we normalise to get probabilities. If you want to get technical, we are doing a maximum likelihood estimation on multinomial distributions, but why get technical?
+
+We will estimate from our data sets independently, so we don't need to count to figure out that `pi` should give one state probability one and all others probability zero; the first observed hidden state is the only state we observe the model starting in. (In general, we would estimate from many data sets, but we don't care here; in any case, both sequences start in `N`).
+
+
+```python
+def estimate_pi(data: HMMData) -> ArrayLike:
+    """Estimate the starting probability from the two sequences in an HMM with K hidden states."""
+    k, _, z = data
+    pi = np.zeros(k)
+    pi[z[0]] = 1.0
+    return pi
+```
+
+
+```python
+# Estimating pi for 3-state HMM
+pi_3 = estimate_pi(data1_3)
+assert_almost_equal(pi_3, [0, 1, 0])
+# Estimating pi for 7-state HMM
+pi_7 = estimate_pi(data1_7)
+assert_almost_equal(pi_7, [0, 0, 0, 1, 0, 0, 0])
+```
+
+For the emission probabilities you need to count how often we see `(hid[i],obs[i])` and for transition probabilities how often you see `(obs[i-1],obs[i])`. The functions below should count these.
+
+
+```python
+def count_emissions(data: HMMData) -> ArrayLike:
+    """Count how often we see the different emissions in the data."""
+    k, obs, hid = data
+    counts = np.zeros((k, 4))  # How often each of the k states emit A,C,G,T.
+    # FIXME: count the emissions
+    for x, z in zip(obs, hid):
+        counts[z, x] += 1
+    return counts
+```
+
+
+```python
+assert_almost_equal(
+    count_emissions(data1_3),
+    np.array([[227971., 133045., 152692., 214779.],
+              [161166.,  90377.,  94437., 159197.],
+              [183196., 129927., 112961., 192693.]])
+)
+assert_almost_equal(
+    count_emissions(data2_3),
+    np.array([[275056., 135918., 164202., 252896.],
+              [166547.,  83826.,  86048., 166486.],
+              [271660., 174583., 143318., 290945.]])
+)
+
+```
+
+
+```python
+def count_transitions(data: HMMData) -> ArrayLike:
+    """Count how often we see the different transitions in the data."""
+    k, _, z = data
+    counts = np.zeros((k, k))  # How often each of the k*k state transitions
+    # FIXME: count the transitions
+    for i in range(len(z) - 1):
+        counts[z[i], z[i+1]] += 1
+    return counts
+```
+
+
+```python
+def estimate_trans(data: HMMData) -> ArrayLike:
+    """Estimate the transition matrix from the data."""
+    counts = count_transitions(data)
+    for i, row in enumerate(counts):
+        counts[i] /= sum(row)
+    return counts
+```
 
 ## Testing
 
@@ -399,6 +565,7 @@ Using doc-test to test the functions in the notebook.
 ```python
 import doctest
 doctest.testmod(verbose=True)
+
 ```
 
     Trying:
@@ -411,34 +578,6 @@ doctest.testmod(verbose=True)
     Expecting:
         [3, 3, 0, 1, 2, 0, 1, 2, 3, 3, 4, 5, 6, 4, 5, 6, 3]
     ok
-    Trying:
-        pi = np.array([0, 1, 0]) # always start in N (== 1)
-    Expecting nothing
-    ok
-    Trying:
-        T = np.array([[0.8, 0.2, 0.0], [0.1, 0.8, 0.1], [0.0, 0.2, 0.8]])
-    Expecting nothing
-    ok
-    Trying:
-        E = np.array([[0.3, 0.2, 0.1, 0.4], [0.5, 0.1, 0.2, 0.2], [0.2, 0.2, 0.3, 0.3]])
-    Expecting nothing
-    ok
-    Trying:
-        theta = hmm_params(pi, T, E)
-    Expecting nothing
-    ok
-    Trying:
-        lik(observed_states('A'), hidden_states('N'), theta)
-    Expecting:
-        0.55
-    **********************************************************************
-    File "__main__", line 9, in __main__.lik
-    Failed example:
-        lik(observed_states('A'), hidden_states('N'), theta)
-    Expected:
-        0.55
-    Got:
-        0.5
     Trying:
         observed_states('ACAGTTC')
     Expecting:
@@ -459,10 +598,19 @@ doctest.testmod(verbose=True)
     Expecting:
         'ACAGTTC'
     ok
-    3 items had no tests:
+    12 items had no tests:
         __main__
+        __main__.HMMData
         __main__.HMMParam
+        __main__.count_emissions
+        __main__.count_transitions
+        __main__.estimate_pi
+        __main__.estimate_trans
+        __main__.hmm_data
         __main__.hmm_params
+        __main__.lik
+        __main__.log_each
+        __main__.log_lik
     6 items passed all tests:
        1 tests in __main__.hidden_states
        1 tests in __main__.hidden_states7
@@ -470,17 +618,14 @@ doctest.testmod(verbose=True)
        1 tests in __main__.rev_hidden_states
        1 tests in __main__.rev_hidden_states7
        1 tests in __main__.rev_observed_states
-    **********************************************************************
-    1 items had failures:
-       1 of   5 in __main__.lik
-    11 tests in 10 items.
-    10 passed and 1 failed.
-    ***Test Failed*** 1 failures.
+    6 tests in 18 items.
+    6 passed and 0 failed.
+    Test passed.
 
 
 
 
 
-    TestResults(failed=1, attempted=11)
+    TestResults(failed=0, attempted=6)
 
 
