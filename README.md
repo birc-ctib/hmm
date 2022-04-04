@@ -84,7 +84,7 @@ The genomic sequence is a sequence over the letters:
 print(set(genome1['genome']))
 ```
 
-    {'C', 'A', 'G', 'T'}
+    {'A', 'G', 'C', 'T'}
 
 
 while the annotation is a sequence over the letters
@@ -94,7 +94,7 @@ while the annotation is a sequence over the letters
 print(set(genome1['annotation']))
 ```
 
-    {'C', 'N', 'R'}
+    {'C', 'R', 'N'}
 
 
 that should be interpreted as non-coding, reverse-coding, and coding.
