@@ -84,7 +84,7 @@ The genomic sequence is a sequence over the letters:
 print(set(genome1['genome']))
 ```
 
-    {'A', 'G', 'C', 'T'}
+    {'T', 'A', 'C', 'G'}
 
 
 while the annotation is a sequence over the letters
@@ -94,7 +94,7 @@ while the annotation is a sequence over the letters
 print(set(genome1['annotation']))
 ```
 
-    {'C', 'R', 'N'}
+    {'N', 'R', 'C'}
 
 
 that should be interpreted as non-coding, reverse-coding, and coding.
@@ -441,15 +441,16 @@ def log_each(x: ArrayLike) -> ArrayLike:
 
 def log_lik(data: HMMData, theta: HMMParam) -> float:
     """
-    Compute the log-likelihood of the data (obs,hid) given the parameters, theta.
+    Compute the log-likelihood of the data (x,z) given the parameters, theta.
     """
     k1, x, z = data
     k2, pi, T, E = theta
     assert k1 == k2
 
+    # Move all the parameters to log-space
     pi, T, E = log_each(pi), log_each(T), log_each(E)
 
-    # FIXME: compute the likelihood
+    # FIXME: compute the log likelihood
     p = pi[z[0]]
     for i, s in enumerate(z[1:]):
         p += T[z[i], s]
@@ -549,13 +550,203 @@ def count_transitions(data: HMMData) -> ArrayLike:
 
 
 ```python
+assert_almost_equal(
+    count_transitions(data1_3),
+    np.array([[7.27678e+05, 8.09000e+02, 0.00000e+00],
+              [8.09000e+02, 5.03728e+05, 6.39000e+02],
+              [0.00000e+00, 6.39000e+02, 6.18138e+05]])
+)
+assert_almost_equal(
+    count_transitions(data2_3),
+    np.array([[8.27191e+05, 8.80000e+02, 1.00000e+00],
+              [8.80000e+02, 5.01103e+05, 9.23000e+02],
+              [1.00000e+00, 9.23000e+02, 8.79582e+05]])
+)
+```
+
+To estimate the emission and transition matrix, we normalise their rows so they become probabilities:
+
+
+```python
+def normalise(matrix: ArrayLike) -> ArrayLike:
+    """Normalise a matrix so each row sums to one."""
+    for i, row in enumerate(matrix):
+        matrix[i] /= sum(row)
+    return matrix
+
+def estimate_emis(data: HMMData) -> ArrayLike:
+    """Estimate the emission matrix from the data."""
+    return normalise(count_emissions(data))
+
 def estimate_trans(data: HMMData) -> ArrayLike:
     """Estimate the transition matrix from the data."""
-    counts = count_transitions(data)
-    for i, row in enumerate(counts):
-        counts[i] /= sum(row)
-    return counts
+    return normalise(count_transitions(data))
+
 ```
+
+With these new functions, we can estimate parameters from the two data sets. Here, for reasons that will remain obscure but are important, we will estimate parameters from the two genomes independently to get two separate parameterisations.
+
+
+```python
+# Estimates for the three-state model
+theta1_3 = hmm_params(estimate_pi(data1_3), estimate_trans(data1_3), estimate_emis(data1_3))
+theta2_3 = hmm_params(estimate_pi(data2_3), estimate_trans(data2_3), estimate_emis(data2_3))
+# Estimates for the seven-state model
+theta1_7 = hmm_params(estimate_pi(data1_7), estimate_trans(data1_7), estimate_emis(data1_7))
+theta2_7 = hmm_params(estimate_pi(data2_7), estimate_trans(data2_7), estimate_emis(data2_7))
+```
+
+With the estimates, we can see what they likelihoods are. The estimates from a given data set should be the highest likelihood you can achive with that data for the given model, and if there are transitions or emissions missing in one of the data sets, it is entirely possible that the estimates from one genome will tell you that the data from the other genome is *impossible*. That is the name of the game in statistics.
+
+While not universally true, you would also generally expect that more free parameters will increase the maximum likelihood. The number of free parameters is, if we ignore pi where we only alow one single start state, are the number of value for each row minus one. You are free to set the rows any way you like, but they have to sum to one, so if you set all except one, the last parameter is already defined. With `K` states you have `K * (K-1)` parameters in the transition matrix and `K * 3` in the emission matrix. So, for the three state HMM you have 15 parameters and in the seven state HMM you have 63. Thus, you expect the seven state HMM to fit the data better than the three state HMM. This doesn't mean that the seven state HMM is better, we cannot conclude that from the maximum likelihood alone, it is simply a consequence of mathematical optimisation.
+
+(In the code below I use the `pandas` module. If you don't have it installed, you can simply print the log likelihoods instead. The only use I make of `pandas` is to get a slightly nicer output).
+
+
+```python
+import pandas as pd
+data = [
+    ["Genome1", "3-states", log_lik(data1_3, theta1_3), log_lik(data1_3, theta2_3)],
+    ["Genome2", "3-states", log_lik(data2_3, theta1_3), log_lik(data2_3, theta2_3)],
+    ["Genome1", "7-states", log_lik(data1_7, theta1_7), log_lik(data1_7, theta2_7)],
+    ["Genome2", "7-states", log_lik(data2_7, theta1_7), log_lik(data2_7, theta2_7)],
+]
+pd.DataFrame(data, columns=["Data", "HMM", "theta1", "theta2"])
+
+```
+
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Data</th>
+      <th>HMM</th>
+      <th>theta1</th>
+      <th>theta2</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>Genome1</td>
+      <td>3-states</td>
+      <td>-2.538784e+06</td>
+      <td>-2.542670e+06</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>Genome2</td>
+      <td>3-states</td>
+      <td>-inf</td>
+      <td>-2.996318e+06</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>Genome1</td>
+      <td>7-states</td>
+      <td>-2.497152e+06</td>
+      <td>-2.503192e+06</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>Genome2</td>
+      <td>7-states</td>
+      <td>-inf</td>
+      <td>-2.936470e+06</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+
+
+If the likelihoods do not directly tell us about how good a model is, how do we measure that?
+
+One approach is to try it on data where we know the true result. Then we can compare what the model predicts to what the true answer is. That is what we will do in the next section.
+
+## Making predictions
+
+HMMs are used for more than making predictions about (or *decoding*) hidden states--I myself used a decade on just estimating parameters, but the situtation was slightly more complicated than the one in the previous section--it is a common usage. Given a hidden Markov model with estimated parameters, can we extract a likely sequence of hidden states from the observed states?
+
+In other words, can we use an HMM to make a function `decode(x, theta) -> z` that gives us the hidden sequence when all we have is the observed sequence.
+
+You might then ask where we get `theta` from, if we don't have `z`. After all, we needed `z` above to estimate the parameters. Well, sometimes we have `z` for *some* data. We might have `z` for the first genome but we want to predict the hidden states from the second genome. In other cases, we don't have any hidden sequences at all, and then we need other methods for estimating `theta`. Such methods exist, but they are beyond this class. If you want to learn about it, then maybe it is a good topic for a PIB.
+
+Anyway, in this section we will use the Viterbi algorithm to implement this `decode(x, theta)` function.
+
+### Viterbi
+
+You have already seen the Viterbi algorithm at the lecture. It is a dynamic programming algorithm with the base case
+
+$$ V[i,0] = \pi[i]\cdot E[i,x[0]] $$
+
+and the recursive case
+
+$$ V[i,l] = \max_{i'} V[i',l-1]\cdot T[i',i]\cdot E[i,x[l]] $$
+
+Our first task is to compute this table.
+
+With our current knowledge of floating point numbers, we should easily recognise that computing `V` will give is very small numbers--we are multiplying increasingly small floats--so it won't work for long sequences. The solution we used before was to move to log-space, and for the Viterbi algorithm that will work as well. Generally, you can move products to log-space by changing multiplication to addition, but you cannot move a sum to log-space. Here, we have products, which is then fine, and we have a `max`. Can we move `max` to log-space? We can if what we really care about is which index has the maximum value, rather than the actual value itself. Since log is a monotone function, `argmax f(i) = argmax log(f(i))`, so we are fine.
+
+Translate the recursion above into one that works in log-space. The parameters $(\pi,T,E)$ also have to move to log-space, but you saw code earlier for doing that.
+
+Now, all you have to do is implement the Viterbi algorithm in the function below:
+
+
+```python
+def viterbi(x: list[int], theta: HMMParam) -> ArrayLike:
+    """Compute the K x len(x) Viterbi table (in log-space)."""
+    K, pi, T, E = theta
+    N = len(x)
+    V = np.empty((K, N))
+    # FIXME: fill in V
+    pi, T, E = log_each(pi), log_each(T), log_each(E)
+    # If you know more about numpy, you can do this much more efficiently,
+    # but this is the fundamental algorithm, so it is good to know how to
+    # implement it with the basic tools any language has.
+    for k in range(K):
+        V[k,0] = pi[k] + E[k,x[0]]
+    for i in range(1, len(x)):
+        for k in range(K):
+            V[k,i] = E[k,x[i]] + max(
+                V[kk, i-1] + T[kk, k]
+                for kk in range(K)
+            )
+    return V
+
+```
+
+
+```python
+expected_A = log_each(theta1_3.pi) + log_each(theta1_3.E[:,0]) # start and emit A (=0)
+assert_almost_equal(expected_A.reshape(3,1), viterbi(observed_states('A'), theta1_3))
+
+assert_almost_equal(viterbi(observed_states('ACGT'), theta1_3),
+                    np.array([[-float("inf"),  -9.2796196, -10.8432777, -12.065749],
+                              [-1.142474,      -2.8662635, -4.5461098,  -5.7037467],
+                              [-float("inf"),  -9.3760039, -11.0777394, -12.2454193]]))
+```
+
+The Viterbi table doesn't give us the decoding. It only tells us which state is most likely at any point, given the observed sequence that we have already observed reading from left to right.
+
+
 
 ## Testing
 
@@ -598,12 +789,13 @@ doctest.testmod(verbose=True)
     Expecting:
         'ACAGTTC'
     ok
-    12 items had no tests:
+    15 items had no tests:
         __main__
         __main__.HMMData
         __main__.HMMParam
         __main__.count_emissions
         __main__.count_transitions
+        __main__.estimate_emis
         __main__.estimate_pi
         __main__.estimate_trans
         __main__.hmm_data
@@ -611,6 +803,8 @@ doctest.testmod(verbose=True)
         __main__.lik
         __main__.log_each
         __main__.log_lik
+        __main__.normalise
+        __main__.viterbi
     6 items passed all tests:
        1 tests in __main__.hidden_states
        1 tests in __main__.hidden_states7
@@ -618,7 +812,7 @@ doctest.testmod(verbose=True)
        1 tests in __main__.rev_hidden_states
        1 tests in __main__.rev_hidden_states7
        1 tests in __main__.rev_observed_states
-    6 tests in 18 items.
+    6 tests in 21 items.
     6 passed and 0 failed.
     Test passed.
 
