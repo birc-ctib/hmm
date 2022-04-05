@@ -84,7 +84,7 @@ The genomic sequence is a sequence over the letters:
 print(set(genome1['genome']))
 ```
 
-    {'T', 'A', 'C', 'G'}
+    {'A', 'T', 'G', 'C'}
 
 
 while the annotation is a sequence over the letters
@@ -94,7 +94,7 @@ while the annotation is a sequence over the letters
 print(set(genome1['annotation']))
 ```
 
-    {'N', 'R', 'C'}
+    {'R', 'N', 'C'}
 
 
 that should be interpreted as non-coding, reverse-coding, and coding.
@@ -356,7 +356,7 @@ Likewise, we can wrap up our data:
 
 ```python
 HMMData = NamedTuple('HMMData', [
-    ('k', int),
+    ('K', int),
     ('x', list[int]),
     ('z', list[int])
 ])
@@ -600,81 +600,30 @@ With the estimates, we can see what they likelihoods are. The estimates from a g
 
 While not universally true, you would also generally expect that more free parameters will increase the maximum likelihood. The number of free parameters is, if we ignore pi where we only alow one single start state, are the number of value for each row minus one. You are free to set the rows any way you like, but they have to sum to one, so if you set all except one, the last parameter is already defined. With `K` states you have `K * (K-1)` parameters in the transition matrix and `K * 3` in the emission matrix. So, for the three state HMM you have 15 parameters and in the seven state HMM you have 63. Thus, you expect the seven state HMM to fit the data better than the three state HMM. This doesn't mean that the seven state HMM is better, we cannot conclude that from the maximum likelihood alone, it is simply a consequence of mathematical optimisation.
 
-(In the code below I use the `pandas` module. If you don't have it installed, you can simply print the log likelihoods instead. The only use I make of `pandas` is to get a slightly nicer output).
-
 
 ```python
-import pandas as pd
-data = [
+log_lik_data = [
     ["Genome1", "3-states", log_lik(data1_3, theta1_3), log_lik(data1_3, theta2_3)],
     ["Genome2", "3-states", log_lik(data2_3, theta1_3), log_lik(data2_3, theta2_3)],
     ["Genome1", "7-states", log_lik(data1_7, theta1_7), log_lik(data1_7, theta2_7)],
     ["Genome2", "7-states", log_lik(data2_7, theta1_7), log_lik(data2_7, theta2_7)],
 ]
-pd.DataFrame(data, columns=["Data", "HMM", "theta1", "theta2"])
 
 ```
 
 
+```python
+print(f'{"Genome":<10} {"Model":<10} {"theta1":<15} {"theta2":<15}')
+for genome, model, theta1, theta2 in log_lik_data:
+    print(f"{genome:<10} {model:<10} {theta1:<15.6e} {theta2:<15.6e}")
 
+```
 
-<div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-
-    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-
-    .dataframe thead th {
-        text-align: right;
-    }
-</style>
-<table border="1" class="dataframe">
-  <thead>
-    <tr style="text-align: right;">
-      <th></th>
-      <th>Data</th>
-      <th>HMM</th>
-      <th>theta1</th>
-      <th>theta2</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th>0</th>
-      <td>Genome1</td>
-      <td>3-states</td>
-      <td>-2.538784e+06</td>
-      <td>-2.542670e+06</td>
-    </tr>
-    <tr>
-      <th>1</th>
-      <td>Genome2</td>
-      <td>3-states</td>
-      <td>-inf</td>
-      <td>-2.996318e+06</td>
-    </tr>
-    <tr>
-      <th>2</th>
-      <td>Genome1</td>
-      <td>7-states</td>
-      <td>-2.497152e+06</td>
-      <td>-2.503192e+06</td>
-    </tr>
-    <tr>
-      <th>3</th>
-      <td>Genome2</td>
-      <td>7-states</td>
-      <td>-inf</td>
-      <td>-2.936470e+06</td>
-    </tr>
-  </tbody>
-</table>
-</div>
-
+    Genome     Model      theta1          theta2         
+    Genome1    3-states   -2.538784e+06   -2.542670e+06  
+    Genome2    3-states   -inf            -2.996318e+06  
+    Genome1    7-states   -2.497152e+06   -2.503192e+06  
+    Genome2    7-states   -inf            -2.936470e+06  
 
 
 If the likelihoods do not directly tell us about how good a model is, how do we measure that?
@@ -744,8 +693,140 @@ assert_almost_equal(viterbi(observed_states('ACGT'), theta1_3),
                               [-float("inf"),  -9.3760039, -11.0777394, -12.2454193]]))
 ```
 
-The Viterbi table doesn't give us the decoding. It only tells us which state is most likely at any point, given the observed sequence that we have already observed reading from left to right.
+The Viterbi table doesn't give us the decoding. It only tells us the likelhood of the most likely hidden sequence to end in each state at any given index, given the observed sequence that we have already observed at that index.
 
+If you now think that decoding must be easy, if each column holds the most likely state, you are excused but also wrong. Each column holds the most likely state conditional on the sequence to the left, but ignoring the sequence on the right. It is possible for a state to be very likely at position 10, conditional on the first 10 observations, but very unlikely if we also consider what observations follows. Furthermore, if state `s` is very likely at index `i` and state `t` is very likely at position `i+1`, it doesn't follow that *both* of them are highly likely. It might even be impossible (have probability zero) to go from state `s` to state `t` at all; it just happens that there is a likely path that ends in `s` at position `i` and *another* likely path that ends in state `t` at position `i+1`.
+
+We want a sequence of hidden states that is globally likely, so the sequence itself is likely and not each state in it locally likely. And for that, we need back track through the Viterbi table.
+
+The last column in `V` holds the likelihoods of the most likely paths that ends in each state: `V[s,-1]` is the likelihood of the most likely path that ends in state `s` after we observe the entirety of `x`. The most likely state to end in, if we have the most likely hidden sequence, must be the largest value here, `z[-1] = argmax(V[s,-1] for s in range(K))`. When you know the state at index `z[-i]`, the previous one is the state that gave you the value in `V[z[-i],i]`, and since we know the formula for computing this value, `max(V[s,-(i+1)] + T[s,z[-i]] + E[z[-i],x[-i]])`, we just need to work out which `s` gives us the right value:
+```
+   z[-(i+1)] = select(
+                   ((V[s, -(i+1)] + T[s,z[-i]] + E[z[-i],x[-i]]) for s in range(K)), 
+                   V[z[-i],-i]
+               )
+```
+where `select` picks the index in the first argument where we get a value that matches the second argument.
+
+Using these observations, I have confidence that you can implement backtracking.
+
+
+```python
+from typing import Iterable
+def argmax(x: Iterable[float]) -> int:
+    """Compute the argmax from a sequence.
+    
+    >>> argmax([1, 2, 3, 2])
+    2
+    >>> argmax([1, 2, 3, 2, 5])
+    4
+    """
+    i, m = -1, -float("inf")
+    for j, v in enumerate(x):
+        if v > m:
+            i, m = j, v
+    return i
+
+
+def select(x: Iterable[float], val: float) -> int:
+    """Get the index in x where we (almost) find value val.
+    
+    >>> select([1.2, 0.3, 2.5], 0.3)
+    1
+    >>> select([32.1, 1.2, 34.3, 1.2, 4.5], 1.2)
+    1
+    """
+    for i, v in enumerate(x):
+        if np.isclose(v, val):
+            return i
+    return None
+
+
+def backtrack(x: list[int], V: ArrayLike, theta: HMMParam) -> list[int]:
+    """Backtrack in the Viterbi table."""
+    K, pi, T, E = theta
+    pi, T, E = log_each(pi), log_each(T), log_each(E)
+    z = [None] * len(x)
+    z[-1] = argmax(V[s,-1] for s in range(K))
+    # FIXME: compute the rest of the hidden sequence
+    for i in range(1, len(x)):
+        # previous state is z[-i] and we want the one that lead to it
+        z[-(i+1)] = select(
+            ((V[s, -(i+1)] + T[s,z[-i]] + E[z[-i],x[-i]]) for s in range(K)), 
+            V[z[-i],-i]
+        )
+    return z
+
+```
+
+We can combine the `viterbi()` and `backtrack()` function to get our `decode()` function:
+
+
+```python
+def decode(x: str, theta: HMMParam) -> str:
+    """
+    Viterbi decode the observed data x given the parameters theta.
+    
+    Returns the most likely hidden path z, i.e. argmax_z(log_lik(x,z,theta))
+    """
+    obs = observed_states(x)
+    V = viterbi(obs, theta)
+    z = backtrack(obs, V, theta)
+    match theta.K:
+        case 3: return rev_hidden_states(z)
+        case 7: return rev_hidden_states7(z)
+```
+
+
+```python
+decoded_1_13 = decode(genome1['genome'], theta1_3) # Decode genome 1 with model/param 1_3
+```
+
+
+```python
+from collections import Counter
+counts = Counter(zip(genome1['annotation'], decoded_1_13))
+confusion_matrix = np.array(
+    [[counts[(true_state,pred_state)] for pred_state in "NCR"] for true_state in "NCR"]
+)
+print(confusion_matrix)
+
+```
+
+    [[   772 504405      0]
+     [  2691 725796      0]
+     [     0 618777      0]]
+
+
+
+```python
+def accuracy(pred_z: str, true_z: str) -> float:
+    """Computes the accuracy from a confusion matrix."""
+    counts = Counter(zip(true_z, pred_z))
+    confusion_matrix = np.array(
+        [[counts[(true_state, pred_state)] for pred_state in "NCR"]
+         for true_state in "NCR"]
+    )
+    return np.diag(confusion_matrix).sum() / confusion_matrix.sum()
+    
+print(f"HMM-3, data1 | theta1, accuracy: {100.0 * accuracy(genome1['annotation'], decoded_1_13):.1f}%")
+```
+
+    HMM-3, data1 | theta1, accuracy: 39.2%
+
+
+
+```python
+decoded_2_13 = decode(genome2['genome'], theta1_3) # Decode genome 2 with model/param 1_3
+```
+
+
+```python
+print(f"HMM-3, data1 | theta1, accuracy: {100.0 * accuracy(genome2['annotation'], decoded_2_13):.1f}%")
+
+```
+
+    HMM-3, data1 | theta1, accuracy: 37.3%
 
 
 ## Testing
@@ -759,6 +840,16 @@ doctest.testmod(verbose=True)
 
 ```
 
+    Trying:
+        argmax([1, 2, 3, 2])
+    Expecting:
+        2
+    ok
+    Trying:
+        argmax([1, 2, 3, 2, 5])
+    Expecting:
+        4
+    ok
     Trying:
         hidden_states('NNCCCCCCNNRRRRRRN')
     Expecting:
@@ -789,12 +880,25 @@ doctest.testmod(verbose=True)
     Expecting:
         'ACAGTTC'
     ok
-    15 items had no tests:
+    Trying:
+        select([1.2, 0.3, 2.5], 0.3)
+    Expecting:
+        1
+    ok
+    Trying:
+        select([32.1, 1.2, 34.3, 1.2, 4.5], 1.2)
+    Expecting:
+        1
+    ok
+    18 items had no tests:
         __main__
         __main__.HMMData
         __main__.HMMParam
+        __main__.accuracy
+        __main__.backtrack
         __main__.count_emissions
         __main__.count_transitions
+        __main__.decode
         __main__.estimate_emis
         __main__.estimate_pi
         __main__.estimate_trans
@@ -805,21 +909,23 @@ doctest.testmod(verbose=True)
         __main__.log_lik
         __main__.normalise
         __main__.viterbi
-    6 items passed all tests:
+    8 items passed all tests:
+       2 tests in __main__.argmax
        1 tests in __main__.hidden_states
        1 tests in __main__.hidden_states7
        1 tests in __main__.observed_states
        1 tests in __main__.rev_hidden_states
        1 tests in __main__.rev_hidden_states7
        1 tests in __main__.rev_observed_states
-    6 tests in 21 items.
-    6 passed and 0 failed.
+       2 tests in __main__.select
+    10 tests in 26 items.
+    10 passed and 0 failed.
     Test passed.
 
 
 
 
 
-    TestResults(failed=0, attempted=6)
+    TestResults(failed=0, attempted=10)
 
 
