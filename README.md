@@ -84,7 +84,7 @@ The genomic sequence is a sequence over the letters:
 print(set(genome1['genome']))
 ```
 
-    {'C', 'A', 'T', 'G'}
+    {'C', 'A', 'G', 'T'}
 
 
 while the annotation is a sequence over the letters
@@ -94,7 +94,7 @@ while the annotation is a sequence over the letters
 print(set(genome1['annotation']))
 ```
 
-    {'C', 'R', 'N'}
+    {'C', 'N', 'R'}
 
 
 that should be interpreted as non-coding, reverse-coding, and coding.
@@ -644,17 +644,17 @@ Anyway, in this section we will use the Viterbi algorithm to implement this `dec
 
 You have already seen the Viterbi algorithm at the lecture. It is a dynamic programming algorithm with the base case
 
-`V[i,0] = \pi[i]\cdot E[i,x[0]]`
+`V[i,0] = pi[i] * E[i,x[0]]`
 
 and the recursive case
 
-`V[i,l] = \max_{i'} V[i',l-1]\cdot T[i',i]\cdot E[i,x[l]]`
+`V[i,l] = max_{i'} V[i',l-1] * T[i',i] * E[i,x[l]]`
 
 Our first task is to compute this table.
 
 With our current knowledge of floating point numbers, we should easily recognise that computing `V` will give is very small numbers--we are multiplying increasingly small floats--so it won't work for long sequences. The solution we used before was to move to log-space, and for the Viterbi algorithm that will work as well. Generally, you can move products to log-space by changing multiplication to addition, but you cannot move a sum to log-space. Here, we have products, which is then fine, and we have a `max`. Can we move `max` to log-space? We can if what we really care about is which index has the maximum value, rather than the actual value itself. Since log is a monotone function, `argmax f(i) = argmax log(f(i))`, so we are fine.
 
-Translate the recursion above into one that works in log-space. The parameters `(\pi,T,E)` also have to move to log-space, but you saw code earlier for doing that.
+Translate the recursion above into one that works in log-space. The parameters `(pi,T,E)` also have to move to log-space, but you saw code earlier for doing that.
 
 Now, all you have to do is implement the Viterbi algorithm in the function below:
 
@@ -700,11 +700,14 @@ If you now think that decoding must be easy, if each column holds the most likel
 We want a sequence of hidden states that is globally likely, so the sequence itself is likely and not each state in it locally likely. And for that, we need back track through the Viterbi table.
 
 The last column in `V` holds the likelihoods of the most likely paths that ends in each state: `V[s,-1]` is the likelihood of the most likely path that ends in state `s` after we observe the entirety of `x`. The most likely state to end in, if we have the most likely hidden sequence, must be the largest value here, `z[-1] = argmax(V[s,-1] for s in range(K))`. When you know the state at index `z[-i]`, the previous one is the state that gave you the value in `V[z[-i],i]`, and since we know the formula for computing this value, `max(V[s,-(i+1)] + T[s,z[-i]] + E[z[-i],x[-i]])`, we just need to work out which `s` gives us the right value:
-```
+
+```python
    z[-(i+1)] = select(
-                   ((V[s, -(i+1)] + T[s,z[-i]] + E[z[-i],x[-i]]) for s in range(K)), 
-                   V[z[-i],-i]
-               )
+        # select in this sequence
+        ((V[s, -(i+1)] + T[s,z[-i]] + E[z[-i],x[-i]]) for s in range(K)), 
+        # the entry that (almost) equals this value
+        V[z[-i],-i]
+    )
 ```
 where `select` picks the index in the first argument where we get a value that matches the second argument.
 
@@ -782,21 +785,25 @@ def decode(x: str, theta: HMMParam) -> str:
 decoded_1_13 = decode(genome1['genome'], theta1_3) # Decode genome 1 with model/param 1_3
 ```
 
+If you want to know how well your prediction is doing, and you have the true decoding for a data set, you can compare the two. A simple way to do this is to count how often you see all combinations of true and predicted states. This is usually called a [confusion matrix](https://en.wikipedia.org/wiki/Confusion_matrix) when the states are binary (true/false classification), but I think we can allow ourselves to do the same thing here. (We can).
+
 
 ```python
 from collections import Counter
 counts = Counter(zip(genome1['annotation'], decoded_1_13))
 confusion_matrix = np.array(
-    [[counts[(true_state,pred_state)] for pred_state in "NCR"] for true_state in "NCR"]
+    [[counts[(true_state,pred_state)] 
+      for pred_state in "NCR"] for true_state in "NCR"]
 )
 print(confusion_matrix)
-
 ```
 
     [[   772 504405      0]
      [  2691 725796      0]
      [     0 618777      0]]
 
+
+The counts on the diagonal are the cases where the predictions and the truth agree, while the off-diagonal counts are the cases where we predict a wrong state. If we want a single number, we can ask how many times, out of the total, do we hit the diagonal, a statistics also know as the *accuracy* of the prediction.
 
 
 ```python
@@ -815,19 +822,51 @@ print(f"HMM-3, data1 | theta1, accuracy: {100.0 * accuracy(genome1['annotation']
     HMM-3, data1 | theta1, accuracy: 39.2%
 
 
+If you get a low accurracy here, you shouldn't worry. With this model, you should. 
+
+The three-state model is simplistic and hoping for greateness with this little effort would be unreasonable. On rare occasions you can get lucky, but it doesn't happen often, and it doesn't happen here. (If you get a great accuracy, you have made a mistake somewhere above, is what I'm saying).
+
+Let's have a look at the other cases for the three-state HMM:
+
 
 ```python
 decoded_2_13 = decode(genome2['genome'], theta1_3) # Decode genome 2 with model/param 1_3
+decoded_1_23 = decode(genome1['genome'], theta2_3) # Decode genome 1 with model/param 2_3
+decoded_2_23 = decode(genome2['genome'], theta2_3) # Decode genome 2 with model/param 2_3
 ```
 
 
 ```python
-print(f"HMM-3, data1 | theta1, accuracy: {100.0 * accuracy(genome2['annotation'], decoded_2_13):.1f}%")
+print("How do we do for genome 1 with the two estimates?")
+print(f"HMM-3, data1 | theta1, accuracy: {100.0 * accuracy(genome1['annotation'], decoded_1_13):.2f}%")
+print(f"HMM-3, data1 | theta2, accuracy: {100.0 * accuracy(genome1['annotation'], decoded_1_23):.2f}%")
+print()
+
+print("How do we do for genome 2 with the two estimates?")
+print(f"HMM-3, data2 | theta1, accuracy: {100.0 * accuracy(genome2['annotation'], decoded_2_13):.2f}%")
+print(f"HMM-3, data2 | theta2, accuracy: {100.0 * accuracy(genome2['annotation'], decoded_2_23):.2f}%")
 
 ```
 
-    HMM-3, data1 | theta1, accuracy: 37.3%
+    How do we do for genome 1 with the two estimates?
+    HMM-3, data1 | theta1, accuracy: 39.22%
+    HMM-3, data1 | theta2, accuracy: 39.22%
+    
+    How do we do for genome 2 with the two estimates?
+    HMM-3, data2 | theta1, accuracy: 37.31%
+    HMM-3, data2 | theta2, accuracy: 37.44%
 
+
+There will generally be a tendency to predict better on the data that you estimated the parameters on, although not always, and you might not see it here. The reason is that the parameters get fitted to the specfic data and not just the general patterns in the model that we seek to exploit for further analysis on other genomes (or in general on other data we might need to analyse). If you fit a model to a data set and then use the fitted parameters to make predictions on the same data, the accurracy will often be too optimistic compared to what you get if you fit the data on one data set and apply them to another. You will get a more realistic estimate of a models accurracy when training data and test data are kept strickly separated.
+
+Anyway, there are plenty of other classes that will teach you about such data science matters. We will move on to the last task: do the same thing with the seven state model and check if a more complicated model will improve our accurracy. (This might take a while; the complexity is `O(K²L)` and we just increased `K` from 3 to 7 so it should take more than five time as long to run each decoding.)
+
+
+```python
+# Decode genome 1 with model/param 1_7
+decoded_1_17 = decode(genome1['genome'], theta1_7)
+
+```
 
 ## Testing
 
