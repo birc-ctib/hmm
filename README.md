@@ -84,7 +84,7 @@ The genomic sequence is a sequence over the letters:
 print(set(genome1['genome']))
 ```
 
-    {'A', 'T', 'G', 'C'}
+    {'C', 'A', 'T', 'G'}
 
 
 while the annotation is a sequence over the letters
@@ -94,14 +94,14 @@ while the annotation is a sequence over the letters
 print(set(genome1['annotation']))
 ```
 
-    {'R', 'N', 'C'}
+    {'C', 'R', 'N'}
 
 
 that should be interpreted as non-coding, reverse-coding, and coding.
 
 If we are to analyse such a genome using a hidden Markov model, we must be able to use both the observable letters (the genomic sequence) and the hidden states (the annotation) as indices into matrices or vectors.
 
-For the three-states model, the $\pi$ vector should have length three, and we should be able to index into it with hidden states, $\pi[z]$; we should be able to index into the transition matrix $T$, a $3\times 3$ matrix, with two hidden states $T[s,t]$, and we should be able to index into the emission matrix, a $3\times 4$ matrix, with a hidden state $z$ and an observed nucleotide, $x$, $E[z,x]$.
+For the three-states model, the `pi` vector should have length three, and we should be able to index into it with hidden states, `pi[z]`; we should be able to index into the transition matrix `T`, a `3*3` matrix, with two hidden states `T[s,t]`, and we should be able to index into the emission matrix, a `3*4` matrix, with a hidden state `z` and an observed nucleotide, `x`, `E[z,x]`.
 
 We could use dictionaries for this indexing, but it is much more convinient to represent vectors as vectors and matrices as matrices (we will see how below), and that requires that we use integers as indices. We need to map the two strings into lists of integers, in some way such that for the genomic sequence the integers are 0, 1, 2, or 3, and such that the annotation maps to integers 0, 1, or 3.
 
@@ -387,7 +387,7 @@ data2_3 = hmm_data(3, genome2['genome'], genome2['annotation'])
 data2_7 = hmm_data(7, genome2['genome'], genome2['annotation'])
 ```
 
-The probability that we go from state $s$ to state $t$ is $T[s,t]$, so with our mapped sequences, let's call them `obs` for observed and `hid` for hidden, the probability of the transition at position `i` should be `T[hid[i],hid[i+1]]`. The probabiity of emitting what we have at position is `E[hid[i],obs[i]]`, and the probability of starting in the first state it `pi[hid[0]]`.
+The probability that we go from state `s` to state `t` is `T[s,t]`, so with our mapped sequences, let's call them `obs` for observed and `hid` for hidden, the probability of the transition at position `i` should be `T[hid[i],hid[i+1]]`. The probabiity of emitting what we have at position is `E[hid[i],obs[i]]`, and the probability of starting in the first state it `pi[hid[0]]`.
 
 Use these observations to implement a function that computes the likelihood of a genomic sequence and an annotation.
 
@@ -644,17 +644,17 @@ Anyway, in this section we will use the Viterbi algorithm to implement this `dec
 
 You have already seen the Viterbi algorithm at the lecture. It is a dynamic programming algorithm with the base case
 
-$$ V[i,0] = \pi[i]\cdot E[i,x[0]] $$
+`V[i,0] = \pi[i]\cdot E[i,x[0]]`
 
 and the recursive case
 
-$$ V[i,l] = \max_{i'} V[i',l-1]\cdot T[i',i]\cdot E[i,x[l]] $$
+`V[i,l] = \max_{i'} V[i',l-1]\cdot T[i',i]\cdot E[i,x[l]]`
 
 Our first task is to compute this table.
 
 With our current knowledge of floating point numbers, we should easily recognise that computing `V` will give is very small numbers--we are multiplying increasingly small floats--so it won't work for long sequences. The solution we used before was to move to log-space, and for the Viterbi algorithm that will work as well. Generally, you can move products to log-space by changing multiplication to addition, but you cannot move a sum to log-space. Here, we have products, which is then fine, and we have a `max`. Can we move `max` to log-space? We can if what we really care about is which index has the maximum value, rather than the actual value itself. Since log is a monotone function, `argmax f(i) = argmax log(f(i))`, so we are fine.
 
-Translate the recursion above into one that works in log-space. The parameters $(\pi,T,E)$ also have to move to log-space, but you saw code earlier for doing that.
+Translate the recursion above into one that works in log-space. The parameters `(\pi,T,E)` also have to move to log-space, but you saw code earlier for doing that.
 
 Now, all you have to do is implement the Viterbi algorithm in the function below:
 
