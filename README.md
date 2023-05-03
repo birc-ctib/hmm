@@ -216,7 +216,7 @@ There are many fine ways to achieve this. A simple one is to look at the annotat
      hid[i] = (hid[i-1] + 1) % 3
 ```
 
-I don't really care how you do it, but I want it done. Write me a function that extracts the hidden states from a seven-state model.
+Write a function that extracts the hidden states from a seven-state model.
 
 
 ```python
